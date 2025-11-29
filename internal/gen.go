@@ -107,7 +107,7 @@ func (v QueryValue) RowNode(rowVar string) *pyast.Node {
 	}
 	for i, f := range v.Struct.Fields {
 		call.Keywords = append(call.Keywords, &pyast.Keyword{
-			Arg: f.Name,
+			Arg: poet.FieldName(f.Name),
 			Value: subscriptNode(
 				rowVar,
 				constantInt(i),
@@ -632,14 +632,110 @@ func pydanticNode(name string) *pyast.ClassDef {
 				},
 			},
 		},
+		Body: poet.Nodes(
+			&pyast.Assign{
+				Targets: []*pyast.Node{
+					{
+						Node: &pyast.Node_Name{
+							Name: &pyast.Name{Id: "model_config"},
+						},
+					},
+				},
+				Value: poet.Node(
+					&pyast.Call{
+						Func: &pyast.Node{
+							Node: &pyast.Node_Attribute{
+								Attribute: &pyast.Attribute{
+									Value: &pyast.Node{
+										Node: &pyast.Node_Name{
+											Name: &pyast.Name{
+												Id: "pydantic",
+											},
+										},
+									},
+									Attr: "ConfigDict",
+								},
+							},
+						},
+						Keywords: []*pyast.Keyword{
+							{
+								Arg:   "validate_by_alias",
+								Value: poet.Name("True"),
+							},
+							{
+								Arg:   "validate_by_name",
+								Value: poet.Name("True"),
+							},
+						},
+					},
+				),
+			},
+		),
 	}
 }
 
-func fieldNode(f Field) *pyast.Node {
+func fieldNode(f Field, emitPydanticModels bool) *pyast.Node {
+	if !poet.IsReserved(f.Name) {
+		return &pyast.Node{
+			Node: &pyast.Node_AnnAssign{
+				AnnAssign: &pyast.AnnAssign{
+					Target:     &pyast.Name{Id: f.Name},
+					Annotation: f.Type.Annotation(),
+					Comment:    f.Comment,
+				},
+			},
+		}
+	}
+
+	// At this point the field name is a reserved python keyword, so we need to
+	// update the field name to be a valid python identifier.
+	if emitPydanticModels {
+		// On Pydantic add `_` at the end of the field name to make it valid
+		// Also add a `= pydantic.Field(alias=...)` to the field to allow clean serde
+		return &pyast.Node{
+			Node: &pyast.Node_Assign{
+				Assign: &pyast.Assign{
+					Targets: poet.Nodes(
+						&pyast.AnnAssign{
+							Target:     &pyast.Name{Id: poet.FieldName(f.Name)},
+							Annotation: f.Type.Annotation(),
+							Comment:    f.Comment,
+						},
+					),
+					Value: poet.Node(
+						&pyast.Call{
+							Func: &pyast.Node{
+								Node: &pyast.Node_Attribute{
+									Attribute: &pyast.Attribute{
+										Value: &pyast.Node{
+											Node: &pyast.Node_Name{
+												Name: &pyast.Name{
+													Id: "pydantic",
+												},
+											},
+										},
+										Attr: "Field",
+									},
+								},
+							},
+							Keywords: []*pyast.Keyword{
+								{
+									Arg:   "alias",
+									Value: poet.Constant(f.Name),
+								},
+							},
+						},
+					),
+				},
+			},
+		}
+	}
+
+	// On dataclasses add `_` at the end of the field name to make it valid
 	return &pyast.Node{
 		Node: &pyast.Node_AnnAssign{
 			AnnAssign: &pyast.AnnAssign{
-				Target:     &pyast.Name{Id: f.Name},
+				Target:     &pyast.Name{Id: poet.FieldName(f.Name)},
 				Annotation: f.Type.Annotation(),
 				Comment:    f.Comment,
 			},
@@ -765,7 +861,7 @@ func buildModelsTree(ctx *pyTmplCtx, i *importer) *pyast.Node {
 			})
 		}
 		for _, f := range m.Fields {
-			def.Body = append(def.Body, fieldNode(f))
+			def.Body = append(def.Body, fieldNode(f, ctx.C.EmitPydanticModels))
 		}
 		mod.Body = append(mod.Body, &pyast.Node{
 			Node: &pyast.Node_ClassDef{
@@ -891,7 +987,7 @@ func buildQueryTree(ctx *pyTmplCtx, i *importer, source string) *pyast.Node {
 					def = dataclassNode(arg.Struct.Name)
 				}
 				for _, f := range arg.Struct.Fields {
-					def.Body = append(def.Body, fieldNode(f))
+					def.Body = append(def.Body, fieldNode(f, ctx.C.EmitPydanticModels))
 				}
 				mod.Body = append(mod.Body, poet.Node(def))
 			}
@@ -904,7 +1000,7 @@ func buildQueryTree(ctx *pyTmplCtx, i *importer, source string) *pyast.Node {
 				def = dataclassNode(q.Ret.Struct.Name)
 			}
 			for _, f := range q.Ret.Struct.Fields {
-				def.Body = append(def.Body, fieldNode(f))
+				def.Body = append(def.Body, fieldNode(f, ctx.C.EmitPydanticModels))
 			}
 			mod.Body = append(mod.Body, poet.Node(def))
 		}
