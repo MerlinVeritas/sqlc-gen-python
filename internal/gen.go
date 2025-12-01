@@ -440,7 +440,7 @@ func buildQueries(conf Config, req *plugin.GenerateRequest, structs []Struct) ([
 			gq.Args = []QueryValue{{
 				Emit:   true,
 				Name:   "arg",
-				Struct: columnsToStruct(req, query.Name+"Params", cols),
+				Struct: columnsToStruct(req, modelName(query.Name+"Params", req.Settings), cols),
 			}}
 		} else {
 			args := make([]QueryValue, 0, len(query.Params))
@@ -495,7 +495,7 @@ func buildQueries(conf Config, req *plugin.GenerateRequest, structs []Struct) ([
 						Column: c,
 					})
 				}
-				gs = columnsToStruct(req, query.Name+"Row", columns)
+				gs = columnsToStruct(req, modelName(query.Name+"Row", req.Settings), columns)
 				emit = true
 			}
 			gq.Ret = QueryValue{
